@@ -254,18 +254,28 @@ IxNodeHandle *IxIndexHandle::split(IxNodeHandle *node) {
     node->set_size(min_size);
 
     if (node->is_leaf_page()) {
-        // 更新叶子结点链表
-        new_node->set_next_leaf(node->get_next_leaf());
-        new_node->set_prev_leaf(node->get_page_no());
-        node->set_next_leaf(new_node->get_page_no());
+    page_id_t old_next = node->get_next_leaf();
 
-        // 更新后继叶子的prev指针
-        if (new_node->get_next_leaf() != IX_LEAF_HEADER_PAGE && new_node->get_next_leaf() != IX_NO_PAGE) {
-            IxNodeHandle *next_leaf = fetch_node(new_node->get_next_leaf());
-            next_leaf->set_prev_leaf(new_node->get_page_no());
-            buffer_pool_manager_->unpin_page(next_leaf->get_page_id(), true);
-        }
-    } else {
+    // 分裂前：node <-> old_next
+    // 分裂后：node <-> new_node <-> old_next
+    new_node->set_prev_leaf(node->get_page_no());
+    new_node->set_next_leaf(old_next);
+    node->set_next_leaf(new_node->get_page_no());
+
+    // 如果 node 原来后面还有真实叶子结点，则更新它的 prev
+    if (old_next != IX_NO_PAGE && old_next != IX_LEAF_HEADER_PAGE) {
+        IxNodeHandle *next_leaf = fetch_node(old_next);
+        next_leaf->set_prev_leaf(new_node->get_page_no());
+        buffer_pool_manager_->unpin_page(next_leaf->get_page_id(), true);
+    }
+
+    // 如果 node 原来是最后一个叶子结点，则 new_node 现在变成最后一个叶子结点
+    if (file_hdr_->last_leaf_ == node->get_page_no() ||
+        old_next == IX_NO_PAGE ||
+        old_next == IX_LEAF_HEADER_PAGE) {
+        file_hdr_->last_leaf_ = new_node->get_page_no();
+    }
+} else {
         // 更新所有移动到新结点的孩子结点的父指针
         for (int i = 0; i < move_size; i++) {
             maintain_child(new_node, i);
