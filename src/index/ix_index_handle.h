@@ -7,7 +7,7 @@ THIS SOFTWARE IS PROVIDED ON AN "AS IS" BASIS, WITHOUT WARRANTIES OF ANY KIND,
 EITHER EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO NON-INFRINGEMENT,
 MERCHANTABILITY OR FIT FOR A PARTICULAR PURPOSE.
 See the Mulan PSL v2 for more details. */
-
+#include <mutex>
 #pragma once
 
 #include "ix_defs.h"
@@ -163,6 +163,7 @@ class IxIndexHandle {
     friend class IxManager;
 
    private:
+    std::mutex tree_latch_;
     DiskManager *disk_manager_;
     BufferPoolManager *buffer_pool_manager_;
     int fd_;                                    // 存储B+树的文件
