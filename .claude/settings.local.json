@@ -1,0 +1,9 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(cmake ..)",
+      "Bash(g++ --version)",
+      "Bash(make --version)"
+    ]
+  }
+}
