@@ -53,4 +53,61 @@ class AbstractExecutor {
         }
         return pos;
     }
+
+    int compare_cols(const char *lhs, const char *rhs, ColType type, int len) const {
+        switch (type) {
+            case TYPE_INT: {
+                int lhs_val = *(int *)lhs;
+                int rhs_val = *(int *)rhs;
+                return (lhs_val > rhs_val) - (lhs_val < rhs_val);
+            }
+            case TYPE_FLOAT: {
+                float lhs_val = *(float *)lhs;
+                float rhs_val = *(float *)rhs;
+                return (lhs_val > rhs_val) - (lhs_val < rhs_val);
+            }
+            case TYPE_STRING:
+                return memcmp(lhs, rhs, len);
+            default:
+                throw InternalError("Unexpected data type");
+        }
+    }
+
+    bool compare_result(int cmp, CompOp op) const {
+        switch (op) {
+            case OP_EQ:
+                return cmp == 0;
+            case OP_NE:
+                return cmp != 0;
+            case OP_LT:
+                return cmp < 0;
+            case OP_GT:
+                return cmp > 0;
+            case OP_LE:
+                return cmp <= 0;
+            case OP_GE:
+                return cmp >= 0;
+            default:
+                throw InternalError("Unexpected comparison operator");
+        }
+    }
+
+    bool eval_cond(const std::vector<ColMeta> &rec_cols, const RmRecord *rec, const Condition &cond) {
+        auto lhs_col = get_col(rec_cols, cond.lhs_col);
+        char *lhs = rec->data + lhs_col->offset;
+        char *rhs = nullptr;
+        if (cond.is_rhs_val) {
+            rhs = cond.rhs_val.raw->data;
+        } else {
+            auto rhs_col = get_col(rec_cols, cond.rhs_col);
+            rhs = rec->data + rhs_col->offset;
+        }
+        return compare_result(compare_cols(lhs, rhs, lhs_col->type, lhs_col->len), cond.op);
+    }
+
+    bool eval_conds(const std::vector<ColMeta> &rec_cols, const RmRecord *rec, const std::vector<Condition> &conds) {
+        return std::all_of(conds.begin(), conds.end(), [&](const Condition &cond) {
+            return eval_cond(rec_cols, rec, cond);
+        });
+    }
 };

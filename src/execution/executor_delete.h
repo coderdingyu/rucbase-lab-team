@@ -24,6 +24,15 @@ class DeleteExecutor : public AbstractExecutor {
     std::string tab_name_;          // 表名称
     SmManager *sm_manager_;
 
+    void make_index_key(const IndexMeta &index, const RmRecord *rec, std::vector<char> &key) {
+        key.assign(index.col_tot_len, 0);
+        int offset = 0;
+        for (auto &col : index.cols) {
+            memcpy(key.data() + offset, rec->data + col.offset, col.len);
+            offset += col.len;
+        }
+    }
+
    public:
     DeleteExecutor(SmManager *sm_manager, const std::string &tab_name, std::vector<Condition> conds,
                    std::vector<Rid> rids, Context *context) {
@@ -37,6 +46,17 @@ class DeleteExecutor : public AbstractExecutor {
     }
 
     std::unique_ptr<RmRecord> Next() override {
+        for (auto &rid : rids_) {
+            auto rec = fh_->get_record(rid, context_);
+            for (auto &index : tab_.indexes) {
+                auto ih = sm_manager_->ihs_.at(
+                    sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
+                std::vector<char> key;
+                make_index_key(index, rec.get(), key);
+                ih->delete_entry(key.data(), context_->txn_);
+            }
+            fh_->delete_record(rid, context_);
+        }
         return nullptr;
     }
 

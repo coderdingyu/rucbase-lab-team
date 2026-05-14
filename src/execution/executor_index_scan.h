@@ -34,6 +34,34 @@ class IndexScanExecutor : public AbstractExecutor {
 
     SmManager *sm_manager_;
 
+    bool make_eq_search_key(std::vector<char> &key) {
+        key.assign(index_meta_.col_tot_len, 0);
+        int offset = 0;
+        for (auto &index_col : index_meta_.cols) {
+            auto cond = std::find_if(fed_conds_.begin(), fed_conds_.end(), [&](const Condition &cond) {
+                return cond.is_rhs_val && cond.op == OP_EQ &&
+                       cond.lhs_col.tab_name == tab_name_ && cond.lhs_col.col_name == index_col.name;
+            });
+            if (cond == fed_conds_.end()) {
+                return false;
+            }
+            memcpy(key.data() + offset, cond->rhs_val.raw->data, index_col.len);
+            offset += index_col.len;
+        }
+        return true;
+    }
+
+    void advance_to_valid_tuple() {
+        while (!scan_->is_end()) {
+            rid_ = scan_->rid();
+            auto rec = fh_->get_record(rid_, context_);
+            if (eval_conds(cols_, rec.get(), fed_conds_)) {
+                return;
+            }
+            scan_->next();
+        }
+    }
+
    public:
     IndexScanExecutor(SmManager *sm_manager, std::string tab_name, std::vector<Condition> conds, std::vector<std::string> index_col_names,
                     Context *context) {
@@ -65,16 +93,41 @@ class IndexScanExecutor : public AbstractExecutor {
     }
 
     void beginTuple() override {
-        
+        auto ih = sm_manager_->ihs_.at(
+            sm_manager_->get_ix_manager()->get_index_name(tab_name_, index_meta_.cols)).get();
+
+        std::vector<char> key;
+        if (make_eq_search_key(key)) {
+            scan_ = std::make_unique<IxScan>(ih, ih->lower_bound(key.data()), ih->upper_bound(key.data()),
+                                             sm_manager_->get_bpm());
+        } else {
+            scan_ = std::make_unique<IxScan>(ih, ih->leaf_begin(), ih->leaf_end(), sm_manager_->get_bpm());
+        }
+        advance_to_valid_tuple();
     }
 
     void nextTuple() override {
-        
+        if (scan_ == nullptr || scan_->is_end()) {
+            return;
+        }
+        scan_->next();
+        advance_to_valid_tuple();
     }
 
     std::unique_ptr<RmRecord> Next() override {
-        return nullptr;
+        if (scan_ == nullptr || scan_->is_end()) {
+            return nullptr;
+        }
+        return fh_->get_record(rid_, context_);
     }
+
+    size_t tupleLen() const override { return len_; }
+
+    const std::vector<ColMeta> &cols() const override { return cols_; }
+
+    bool is_end() const override { return scan_ == nullptr || scan_->is_end(); }
+
+    ColMeta get_col_offset(const TabCol &target) override { return *get_col(cols_, target); }
 
     Rid &rid() override { return rid_; }
 };

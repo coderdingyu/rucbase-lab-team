@@ -25,6 +25,15 @@ class UpdateExecutor : public AbstractExecutor {
     std::vector<SetClause> set_clauses_;
     SmManager *sm_manager_;
 
+    void make_index_key(const IndexMeta &index, const RmRecord *rec, std::vector<char> &key) {
+        key.assign(index.col_tot_len, 0);
+        int offset = 0;
+        for (auto &col : index.cols) {
+            memcpy(key.data() + offset, rec->data + col.offset, col.len);
+            offset += col.len;
+        }
+    }
+
    public:
     UpdateExecutor(SmManager *sm_manager, const std::string &tab_name, std::vector<SetClause> set_clauses,
                    std::vector<Condition> conds, std::vector<Rid> rids, Context *context) {
@@ -38,7 +47,33 @@ class UpdateExecutor : public AbstractExecutor {
         context_ = context;
     }
     std::unique_ptr<RmRecord> Next() override {
-        
+        for (auto &rid : rids_) {
+            auto old_rec = fh_->get_record(rid, context_);
+            auto new_rec = std::make_unique<RmRecord>(*old_rec);
+
+            for (auto &set_clause : set_clauses_) {
+                auto col = tab_.get_col(set_clause.lhs.col_name);
+                if (col->type != set_clause.rhs.type) {
+                    throw IncompatibleTypeError(coltype2str(col->type), coltype2str(set_clause.rhs.type));
+                }
+                memcpy(new_rec->data + col->offset, set_clause.rhs.raw->data, col->len);
+            }
+
+            for (auto &index : tab_.indexes) {
+                auto ih = sm_manager_->ihs_.at(
+                    sm_manager_->get_ix_manager()->get_index_name(tab_name_, index.cols)).get();
+                std::vector<char> old_key;
+                std::vector<char> new_key;
+                make_index_key(index, old_rec.get(), old_key);
+                make_index_key(index, new_rec.get(), new_key);
+                if (memcmp(old_key.data(), new_key.data(), index.col_tot_len) != 0) {
+                    ih->delete_entry(old_key.data(), context_->txn_);
+                    ih->insert_entry(new_key.data(), rid, context_->txn_);
+                }
+            }
+
+            fh_->update_record(rid, new_rec->data, context_);
+        }
         return nullptr;
     }
 
