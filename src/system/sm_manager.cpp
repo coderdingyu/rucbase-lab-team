@@ -285,7 +285,11 @@ void SmManager::create_index(const std::string& tab_name, const std::vector<std:
         }
         ih->insert_entry(key.data(), scan.rid(), context == nullptr ? nullptr : context->txn_);
     }
-    ihs_.emplace(index_name, std::move(ih));
+    if (context == nullptr) {
+        ix_manager_->close_index(ih.get());
+    } else {
+        ihs_.emplace(index_name, std::move(ih));
+    }
 
     for (auto &col_name : col_names) {
         auto it = tab.get_col(col_name);
